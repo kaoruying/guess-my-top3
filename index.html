@@ -16,15 +16,41 @@ function qIndex(){return roomData?.questions?.[roomData?.step||0]??ORDER[roomDat
 function q(){return Q[qIndex()]}
 function rankOf(v){return v?.rank||[]}
 function score(p,a){p=rankOf(p);a=rankOf(a);let n=0;p.forEach((x,i)=>{if(a.includes(x))n++;if(a[i]===x)n++});return n}
-function watch(){if(unsubscribe)unsubscribe();unsubscribe=onSnapshot(roomRef,s=>{if(!s.exists()){error("房間不存在");return}roomData=s.data();let d=roomData,step=d.step||0,other=d[otherField()+"Name"];if(!other){show("lobby");$("lobbyStatus").textContent="房間已就緒，等待另一位玩家加入。";return}
-if(step>=TOTAL){show("result");finalResult();return}
-let mine=d[myField()+"Self"],theirs=d[otherField()+"Self"],myGuess=d[myField()+"Guess"],theirGuess=d[otherField()+"Guess"];
-let mode= !mine?"self":!myGuess?"guess":!theirs||!theirGuess?"waitGuess":"reveal";
-let key=step+":"+mode;
-if(key!==viewKey||mode==="reveal"&&$("result").classList.contains("hidden")){viewKey=key;picks=[];if(mode==="self"||mode==="guess")render(mode);else if(mode==="reveal")reveal();else{show("wait");$("waitText").textContent="你已填完自己的答案與對對方的猜測，等待 "+other+" 完成。"}}
-},e=>error(friendly(e)))}
+function applyState(force=false){
+ if(!roomData)return;
+ let d=roomData,step=d.step||0,other=d[otherField()+"Name"];
+ if(!other){show("lobby");$("lobbyStatus").textContent="房間已就緒，等待另一位玩家加入。";return}
+ if(step>=TOTAL){viewKey="final";finalResult();return}
+ let mine=d[myField()+"Self"],theirs=d[otherField()+"Self"],myGuess=d[myField()+"Guess"],theirGuess=d[otherField()+"Guess"];
+ let mode=!mine?"self":!myGuess?"guess":!theirs||!theirGuess?"waitGuess":"reveal";
+ let key=step+":"+mode;
+ if(force||key!==viewKey){
+   viewKey=key;picks=[];
+   if(mode==="self"||mode==="guess")render(mode);
+   else if(mode==="reveal")reveal();
+   else{show("wait");$("waitText").textContent="已送出自己的答案與猜測，等待 "+other+" 完成。"}
+ }else if(mode==="reveal"&&$("result").classList.contains("hidden"))reveal();
+}
+function watch(){
+ if(unsubscribe)unsubscribe();
+ unsubscribe=onSnapshot(roomRef,s=>{
+   if(!s.exists()){error("房間不存在");return}
+   roomData=s.data();applyState();
+ },e=>error(friendly(e)));
+}
 function render(mode){show("game");let step=roomData.step||0;$("progressLabel").textContent="QUESTION "+(step+1)+" / "+TOTAL;$("progressFill").style.width=((step+1)/TOTAL*100)+"%";$("stage").textContent=(mode==="self"?"第一步｜選出自己的 TOP 3":"第二步｜猜猜 "+roomData[otherField()+"Name"]+" 的 TOP 3")+"｜第 "+(step+1)+" 題";$("question").textContent=q()[0];$("choices").replaceChildren();q().slice(1).forEach((v,i)=>{let b=document.createElement("button");b.className="option"+(picks.includes(i)?" active":"");let a=document.createElement("span");a.className="letter";a.textContent=letters[i];let t=document.createElement("span");t.textContent=v;b.append(a,t);if(picks.includes(i)){let r=document.createElement("span");r.className="rank";r.textContent="第 "+(picks.indexOf(i)+1)+" 名";b.append(r)}b.onclick=()=>{if(picks.includes(i))picks=picks.filter(x=>x!==i);else if(picks.length<3)picks.push(i);render(mode)};$("choices").append(b)});$("picked").textContent=picks.length?"已選排名："+picks.map((p,i)=>(i+1)+". "+letters[p]+" "+q()[p+1]).join("／"):"尚未選擇";$("next").disabled=picks.length!==3||busy;$("next").textContent=mode==="self"?"確認我的 TOP 3":"送出對對方的猜測"}
-$("next").onclick=async()=>{if(picks.length!==3||busy)return;let mode=roomData[myField()+"Self"]?"guess":"self";busy=true;$("next").disabled=true;try{await updateDoc(roomRef,{[myField()+(mode==="self"?"Self":"Guess")]:{rank:[...picks]}});picks=[];viewKey="";if(roomData){let modeAfter=mode==="self"?"guess":"waitGuess";if(modeAfter==="guess"){roomData[myField()+"Self"]={rank:[]};render("guess")}else{show("wait");$("waitText").textContent="已送出自己的答案和猜測，等待另一位玩家完成。"}}}catch(e){error(friendly(e));render(mode)}finally{busy=false}};
+$("next").onclick=async()=>{
+ if(picks.length!==3||busy)return;
+ let mode=roomData[myField()+"Self"]?"guess":"self";
+ let rank=[...picks];
+ busy=true;$("next").disabled=true;error("");
+ try{
+   await updateDoc(roomRef,{[myField()+(mode==="self"?"Self":"Guess")]:{rank}});
+   const fresh=await getDoc(roomRef);
+   if(fresh.exists())roomData=fresh.data();
+   busy=false;applyState(true);
+ }catch(e){busy=false;error(friendly(e));render(mode)}
+};
 function reveal(){show("result");let d=roomData,step=d.step||0,other=d[otherField()+"Name"],myReal=d[myField()+"Self"],otherReal=d[otherField()+"Self"],myGuess=d[myField()+"Guess"],otherGuess=d[otherField()+"Guess"],mine=score(myGuess,otherReal),theirs=score(otherGuess,myReal);
 $("results").replaceChildren();let h=document.createElement("h3");h.textContent="第 "+(step+1)+" / "+TOTAL+" 題｜"+q()[0];$("results").append(h);
 let summary=document.createElement("div");summary.className="answer";summary.textContent=me+" 猜對 "+mine+" / 6 分；"+other+" 猜對 "+theirs+" / 6 分";$("results").append(summary);
